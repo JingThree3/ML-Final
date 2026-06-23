@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-
+import joblib
 
 RAW_POWER_PATH = "data/raw/household_power_consumption.txt"
 RAW_WEATHER_PATH = "data/raw/MENSQ_92_previous-1950-2024.csv"
@@ -14,6 +14,7 @@ MERGED_DAILY_PATH = os.path.join(PROCESSED_DIR, "merged_daily.csv")
 
 TRAIN_CSV_PATH = os.path.join(PROCESSED_DIR, "train.csv")
 TEST_CSV_PATH = os.path.join(PROCESSED_DIR, "test.csv")
+SCALER_PATH = os.path.join(PROCESSED_DIR, "scaler.pkl")
 
 
 # 基本参数
@@ -258,6 +259,10 @@ def split_train_test_by_time(df):
 def scale_train_test(train_df, test_df):
     """
     标准化数据。
+
+    注意：
+    只能使用训练集 fit scaler，
+    测试集只能 transform，避免数据泄露。
     """
     feature_cols = [col for col in train_df.columns if col != "date"]
 
@@ -266,8 +271,28 @@ def scale_train_test(train_df, test_df):
     train_scaled = train_df.copy()
     test_scaled = test_df.copy()
 
-    train_scaled[feature_cols] = scaler.fit_transform(train_df[feature_cols])
-    test_scaled[feature_cols] = scaler.transform(test_df[feature_cols])
+    # 在训练集上拟合 scaler，并转换训练集
+    train_scaled[feature_cols] = scaler.fit_transform(
+        train_df[feature_cols]
+    )
+
+    # 使用训练集得到的 scaler 转换测试集
+    test_scaled[feature_cols] = scaler.transform(
+        test_df[feature_cols]
+    )
+
+    # 保存 scaler，后续测试和画图时用于反标准化
+    joblib.dump(scaler, SCALER_PATH)
+
+    # 保存特征列顺序，反标准化时需要知道 global_active_power 在第几列
+    pd.Series(feature_cols).to_csv(
+        os.path.join(PROCESSED_DIR, "feature_cols.csv"),
+        index=False,
+        header=False,
+        encoding="utf-8-sig"
+    )
+
+    print("Scaler 已保存：", SCALER_PATH)
 
     return train_scaled, test_scaled, feature_cols, scaler
 
