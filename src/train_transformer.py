@@ -1,7 +1,7 @@
 """
-train_lstm.py
+train_transformer.py
 
-自动五轮实验版：训练 LSTM 基准模型
+自动五轮实验版：训练 Transformer 基准模型
 """
 
 import os
@@ -15,7 +15,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 import matplotlib.pyplot as plt
 
 from dataset import build_dataloader
-from models import LSTMModel
+from models import TransformerModel
 
 
 # ==========================
@@ -45,13 +45,21 @@ SEEDS = [42, 52, 62, 72, 82]
 
 BATCH_SIZE = 32
 EPOCHS = 100
-LEARNING_RATE = 1e-3
 
-HIDDEN_SIZE = 64
-NUM_LAYERS = 2
+# Transformer 相比 LSTM 更容易震荡，学习率建议稍小
+LEARNING_RATE = 5e-4
+WEIGHT_DECAY = 1e-4
 
 INPUT_SIZE = 13
 OUTPUT_SIZE = 90 if TASK == "90" else 365
+
+D_MODEL = 64
+NHEAD = 4
+NUM_LAYERS = 2
+DIM_FEEDFORWARD = 128
+DROPOUT = 0.1
+
+GRAD_CLIP = 1.0
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -70,8 +78,13 @@ os.makedirs(RESULT_DIR, exist_ok=True)
 
 
 # ==========================
-# 4. 评价函数
+# 4. 工具函数
 # ==========================
+
+def count_parameters(model):
+    """统计可训练参数量"""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 
 def evaluate(model, data_loader, criterion):
     """
@@ -109,10 +122,6 @@ def evaluate(model, data_loader, criterion):
     return avg_loss, mae, mse, pred, true
 
 
-# ==========================
-# 5. 绘图函数
-# ==========================
-
 def plot_loss(train_losses, test_losses, save_path, seed):
     """绘制训练集和测试集 Loss 曲线"""
     plt.figure(figsize=(8, 5))
@@ -123,7 +132,7 @@ def plot_loss(train_losses, test_losses, save_path, seed):
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.xlabel("Epoch")
     plt.ylabel("MSE Loss")
-    plt.title(f"LSTM Loss Curve: 90 -> {TASK}, Seed={seed}")
+    plt.title(f"Transformer Loss Curve: 90 -> {TASK}, Seed={seed}")
 
     plt.legend()
     plt.tight_layout()
@@ -153,7 +162,7 @@ def plot_prediction(true, pred, save_path, seed):
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.xlabel("Future Day")
     plt.ylabel("Scaled Global Active Power")
-    plt.title(f"LSTM Prediction Curve: 90 -> {TASK}, Seed={seed}")
+    plt.title(f"Transformer Prediction Curve: 90 -> {TASK}, Seed={seed}")
 
     plt.legend()
     plt.tight_layout()
@@ -162,13 +171,11 @@ def plot_prediction(true, pred, save_path, seed):
 
 
 # ==========================
-# 6. 单轮实验函数
+# 5. 单轮实验
 # ==========================
 
 def run_one_experiment(seed):
-    """
-    运行一次 LSTM 实验
-    """
+    """运行一次 Transformer 实验"""
 
     set_seed(seed)
 
@@ -177,34 +184,43 @@ def run_one_experiment(seed):
         batch_size=BATCH_SIZE
     )
 
-    model = LSTMModel(
+    model = TransformerModel(
         input_size=INPUT_SIZE,
-        hidden_size=HIDDEN_SIZE,
+        output_size=OUTPUT_SIZE,
+        d_model=D_MODEL,
+        nhead=NHEAD,
         num_layers=NUM_LAYERS,
-        output_size=OUTPUT_SIZE
+        dim_feedforward=DIM_FEEDFORWARD,
+        dropout=DROPOUT
     ).to(DEVICE)
 
     criterion = nn.MSELoss()
-    optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
+
+    optimizer = Adam(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY
+    )
 
     best_model_path = os.path.join(
         MODEL_DIR,
-        f"best_lstm_{TASK}_seed{seed}.pth"
+        f"best_transformer_{TASK}_seed{seed}.pth"
     )
 
     loss_fig_path = os.path.join(
         FIGURE_DIR,
-        f"lstm_loss_{TASK}_seed{seed}.png"
+        f"transformer_loss_{TASK}_seed{seed}.png"
     )
 
     pred_fig_path = os.path.join(
         FIGURE_DIR,
-        f"lstm_prediction_{TASK}_seed{seed}.png"
+        f"transformer_prediction_{TASK}_seed{seed}.png"
     )
 
     print("=" * 60)
-    print(f"开始训练 LSTM，任务：90 -> {TASK}，Seed={seed}")
+    print(f"开始训练 Transformer，任务：90 -> {TASK}，Seed={seed}")
     print("使用设备：", DEVICE)
+    print("模型参数量：", count_parameters(model))
     print("=" * 60)
 
     train_losses = []
@@ -213,6 +229,7 @@ def run_one_experiment(seed):
     best_test_loss = float("inf")
 
     for epoch in range(EPOCHS):
+
         model.train()
         train_loss_total = 0.0
 
@@ -226,6 +243,13 @@ def run_one_experiment(seed):
             loss = criterion(pred, y)
 
             loss.backward()
+
+            # 梯度裁剪，提升 Transformer 训练稳定性
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(),
+                GRAD_CLIP
+            )
+
             optimizer.step()
 
             train_loss_total += loss.item()
@@ -295,12 +319,13 @@ def run_one_experiment(seed):
         "mse": final_mse,
         "best_model_path": best_model_path,
         "loss_fig_path": loss_fig_path,
-        "pred_fig_path": pred_fig_path
+        "pred_fig_path": pred_fig_path,
+        "param_count": count_parameters(model)
     }
 
 
 # ==========================
-# 7. 主函数：自动五轮实验
+# 6. 主函数：自动五轮实验
 # ==========================
 
 def main():
@@ -314,7 +339,7 @@ def main():
 
     result_csv_path = os.path.join(
         RESULT_DIR,
-        f"lstm_results_{TASK}.csv"
+        f"transformer_results_{TASK}.csv"
     )
 
     result_df.to_csv(
@@ -333,10 +358,10 @@ def main():
     loss_std = result_df["best_test_loss"].std()
 
     print("\n" + "=" * 60)
-    print(f"LSTM 五轮实验汇总：90 -> {TASK}")
+    print(f"Transformer 五轮实验汇总：90 -> {TASK}")
     print("=" * 60)
 
-    print(result_df[["seed", "best_test_loss", "mae", "mse"]])
+    print(result_df[["seed", "best_test_loss", "mae", "mse", "param_count"]])
 
     print("-" * 60)
     print(f"Best Test Loss : {loss_mean:.6f} ± {loss_std:.6f}")
