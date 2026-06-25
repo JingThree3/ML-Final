@@ -204,17 +204,17 @@ def run_one_experiment(seed):
 
     best_model_path = os.path.join(
         MODEL_DIR,
-        f"best_transformer_{TASK}_seed{seed}.pth"
+        f"weather_film_results_best_transformer_{TASK}_seed{seed}.pth"
     )
 
     loss_fig_path = os.path.join(
         FIGURE_DIR,
-        f"transformer_loss_{TASK}_seed{seed}.png"
+        f"weather_film_results_transformer_loss_{TASK}_seed{seed}.png"
     )
 
     pred_fig_path = os.path.join(
         FIGURE_DIR,
-        f"transformer_prediction_{TASK}_seed{seed}.png"
+        f"weather_film_results_transformer_prediction_{TASK}_seed{seed}.png"
     )
 
     print("=" * 60)

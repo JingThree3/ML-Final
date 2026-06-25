@@ -77,6 +77,9 @@ class LSTMModel(nn.Module):
         out = self.fc(hidden)
 
         return out
+
+
+
 class PositionalEncoding(nn.Module):
     """
     Transformer位置编码
@@ -121,18 +124,102 @@ class PositionalEncoding(nn.Module):
         seq_len = x.size(1)
 
         return x + self.pe[:, :seq_len]
+class WeatherAdaptiveGate(nn.Module):
+    """
+    天气自适应门控模块
+
+    作用：
+    根据当前天气变量本身，动态判断每个天气变量的重要性。
+    """
+
+    def __init__(self, weather_dim, hidden_dim=32):
+        super().__init__()
+
+        self.gate = nn.Sequential(
+            nn.Linear(weather_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, weather_dim),
+            nn.Sigmoid()
+        )
+
+    def forward(self, weather_x):
+        """
+        weather_x:
+            (batch, seq_len, weather_dim)
+
+        返回：
+            gated_weather:
+                加权后的天气特征
+
+            gate_weight:
+                天气变量权重
+        """
+
+        gate_weight = self.gate(weather_x)
+
+        gated_weather = weather_x * gate_weight
+
+        return gated_weather, gate_weight
+
+
+class FiLMModulation(nn.Module):
+    """
+    FiLM 条件调制模块
+
+    作用：
+    利用天气特征生成 gamma 和 beta，
+    对电力特征进行动态调制。
+
+    power' = gamma * power + beta
+    """
+
+    def __init__(self, weather_dim, power_dim, hidden_dim=32):
+        super().__init__()
+
+        self.gamma_net = nn.Sequential(
+            nn.Linear(weather_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, power_dim)
+        )
+
+        self.beta_net = nn.Sequential(
+            nn.Linear(weather_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, power_dim)
+        )
+
+    def forward(self, power_x, weather_x):
+        """
+        power_x:
+            (batch, seq_len, power_dim)
+
+        weather_x:
+            (batch, seq_len, weather_dim)
+        """
+
+        # 为了训练稳定，不让 gamma 变化过大
+        gamma = 1.0 + 0.1 * torch.tanh(self.gamma_net(weather_x))
+
+        beta = 0.1 * torch.tanh(self.beta_net(weather_x))
+
+        modulated_power = gamma * power_x + beta
+
+        return modulated_power
+
 
 class TransformerModel(nn.Module):
     """
-    Transformer基准模型
+    Weather-FiLM Transformer 改进模型
 
     输入：
-        (batch,90,13)
+        (batch, 90, 13)
+
+    特征划分：
+        前8维：电力特征
+        后5维：天气特征
 
     输出：
-        (batch,90)
-        或
-        (batch,365)
+        (batch, output_size)
     """
 
     def __init__(
@@ -147,18 +234,35 @@ class TransformerModel(nn.Module):
     ):
         super().__init__()
 
-        # 输入映射
+        self.power_dim = 8
+        self.weather_dim = 5
+
+        assert input_size == self.power_dim + self.weather_dim
+
+        # 创新点1：天气自适应门控
+        self.weather_gate = WeatherAdaptiveGate(
+            weather_dim=self.weather_dim,
+            hidden_dim=32
+        )
+
+        # 创新点2：FiLM 天气条件调制
+        self.film = FiLMModulation(
+            weather_dim=self.weather_dim,
+            power_dim=self.power_dim,
+            hidden_dim=32
+        )
+
+        # 标准 Transformer 输入映射
         self.input_projection = nn.Linear(
             input_size,
             d_model
         )
 
-        # 位置编码
         self.position_encoding = PositionalEncoding(
-            d_model=d_model
+            d_model=d_model,
+            max_len=90
         )
 
-        # Encoder Layer
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -167,15 +271,12 @@ class TransformerModel(nn.Module):
             batch_first=True
         )
 
-        # Transformer Encoder
         self.encoder = nn.TransformerEncoder(
             encoder_layer,
             num_layers=num_layers
         )
 
-        # 输出层
         self.fc = nn.Sequential(
-
             nn.Flatten(),
 
             nn.Linear(
@@ -191,34 +292,48 @@ class TransformerModel(nn.Module):
                 256,
                 output_size
             )
-
         )
 
     def forward(self, x):
         """
-        输入：
-
-        (batch,90,13)
-
-        输出：
-
-        (batch,output_size)
+        x:
+            (batch, 90, 13)
         """
 
-        # 映射到Transformer维度
+        # 前8维是电力变量
+        power_x = x[:, :, :self.power_dim]
+
+        # 后5维是天气变量
+        weather_x = x[:, :, self.power_dim:]
+
+        # Weather Adaptive Gate
+        gated_weather, gate_weight = self.weather_gate(weather_x)
+
+        # FiLM：用天气调制电力特征
+        modulated_power = self.film(
+            power_x,
+            gated_weather
+        )
+
+        # 拼回13维特征
+        x = torch.cat(
+            [
+                modulated_power,
+                gated_weather
+            ],
+            dim=-1
+        )
+
+        # 标准 Transformer
         x = self.input_projection(x)
 
-        # 加位置编码
         x = self.position_encoding(x)
 
-        # Transformer Encoder
         x = self.encoder(x)
 
-        # 输出
         out = self.fc(x)
 
         return out
-
 
 
 if __name__ == "__main__":
