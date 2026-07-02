@@ -206,8 +206,101 @@ class FiLMModulation(nn.Module):
 
         return modulated_power
 
-
 class TransformerModel(nn.Module):
+    """
+    标准 Transformer 基准模型
+
+    输入：
+        (batch, 90, 13)
+
+    输出：
+        (batch, output_size)
+    """
+
+    def __init__(
+            self,
+            input_size,
+            output_size,
+            d_model=64,
+            nhead=4,
+            num_layers=2,
+            dim_feedforward=128,
+            dropout=0.1
+    ):
+        super().__init__()
+
+        # 输入映射
+        self.input_projection = nn.Linear(
+            input_size,
+            d_model
+        )
+
+        # 位置编码
+        self.position_encoding = PositionalEncoding(
+            d_model=d_model,
+            max_len=90
+        )
+
+        # Transformer Encoder Layer
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True
+        )
+
+        # Transformer Encoder
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers
+        )
+
+        # 输出层
+        self.fc = nn.Sequential(
+
+            nn.Flatten(),
+
+            nn.Linear(
+                90 * d_model,
+                256
+            ),
+
+            nn.ReLU(),
+
+            nn.Dropout(dropout),
+
+            nn.Linear(
+                256,
+                output_size
+            )
+        )
+
+    def forward(self, x):
+        """
+        输入：
+            x
+            (batch, 90, 13)
+
+        输出：
+            (batch, output_size)
+        """
+
+        # 特征映射
+        x = self.input_projection(x)
+
+        # 位置编码
+        x = self.position_encoding(x)
+
+        # Transformer Encoder
+        x = self.encoder(x)
+
+        # 输出预测
+        out = self.fc(x)
+
+        return out
+
+class WeatherFiLMTransformerModel(nn.Module):
     """
     Weather-FiLM Transformer 改进模型
 

@@ -15,7 +15,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 import matplotlib.pyplot as plt
 
 from dataset import build_dataloader
-from models import TransformerModel
+from models import WeatherFiLMTransformerModel
 
 
 # ==========================
@@ -35,9 +35,9 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-# ==========================
-# 2. 超参数设置
-# ==========================
+MODEL_NAME = "weather_film_transformer"
+#MODEL_NAME = "transformer"
+
 
 TASK = "365"          # "90" 或 "365"
 
@@ -46,7 +46,7 @@ SEEDS = [42, 52, 62, 72, 82]
 BATCH_SIZE = 32
 EPOCHS = 100
 
-# Transformer 相比 LSTM 更容易震荡，学习率建议稍小
+
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY = 1e-4
 
@@ -63,10 +63,6 @@ GRAD_CLIP = 1.0
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-# ==========================
-# 3. 输出目录
-# ==========================
 
 MODEL_DIR = "outputs/models"
 FIGURE_DIR = "outputs/figures"
@@ -132,7 +128,8 @@ def plot_loss(train_losses, test_losses, save_path, seed):
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.xlabel("Epoch")
     plt.ylabel("MSE Loss")
-    plt.title(f"Transformer Loss Curve: 90 -> {TASK}, Seed={seed}")
+    #plt.title(f"Transformer Loss Curve: 90 -> {TASK}, Seed={seed}")
+    plt.title(f"{MODEL_NAME} Loss Curve: 90 -> {TASK}, Seed={seed}")
 
     plt.legend()
     plt.tight_layout()
@@ -162,7 +159,8 @@ def plot_prediction(true, pred, save_path, seed):
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.xlabel("Future Day")
     plt.ylabel("Scaled Global Active Power")
-    plt.title(f"Transformer Prediction Curve: 90 -> {TASK}, Seed={seed}")
+    #plt.title(f"Transformer Prediction Curve: 90 -> {TASK}, Seed={seed}")
+    plt.title(f"{MODEL_NAME} Prediction Curve: 90 -> {TASK}, Seed={seed}")
 
     plt.legend()
     plt.tight_layout()
@@ -184,7 +182,7 @@ def run_one_experiment(seed):
         batch_size=BATCH_SIZE
     )
 
-    model = TransformerModel(
+    model = WeatherFiLMTransformerModel(
         input_size=INPUT_SIZE,
         output_size=OUTPUT_SIZE,
         d_model=D_MODEL,
@@ -204,21 +202,22 @@ def run_one_experiment(seed):
 
     best_model_path = os.path.join(
         MODEL_DIR,
-        f"weather_film_results_best_transformer_{TASK}_seed{seed}.pth"
+        f"best_{MODEL_NAME}_{TASK}_seed{seed}.pth"
     )
 
     loss_fig_path = os.path.join(
         FIGURE_DIR,
-        f"weather_film_results_transformer_loss_{TASK}_seed{seed}.png"
+        f"{MODEL_NAME}_loss_{TASK}_seed{seed}.png"
     )
 
     pred_fig_path = os.path.join(
         FIGURE_DIR,
-        f"weather_film_results_transformer_prediction_{TASK}_seed{seed}.png"
+        f"{MODEL_NAME}_prediction_{TASK}_seed{seed}.png"
     )
 
     print("=" * 60)
-    print(f"开始训练 Transformer，任务：90 -> {TASK}，Seed={seed}")
+    print(f"开始训练 {MODEL_NAME}，任务：90 -> {TASK}，Seed={seed}")
+
     print("使用设备：", DEVICE)
     print("模型参数量：", count_parameters(model))
     print("=" * 60)
@@ -336,10 +335,9 @@ def main():
         all_results.append(result)
 
     result_df = pd.DataFrame(all_results)
-
     result_csv_path = os.path.join(
         RESULT_DIR,
-        f"transformer_results_{TASK}.csv"
+        f"{MODEL_NAME}_results_{TASK}.csv"
     )
 
     result_df.to_csv(
@@ -358,7 +356,8 @@ def main():
     loss_std = result_df["best_test_loss"].std()
 
     print("\n" + "=" * 60)
-    print(f"Transformer 五轮实验汇总：90 -> {TASK}")
+    print(f"{MODEL_NAME} 五轮实验汇总：90 -> {TASK}")
+
     print("=" * 60)
 
     print(result_df[["seed", "best_test_loss", "mae", "mse", "param_count"]])
